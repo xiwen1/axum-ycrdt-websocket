@@ -36,6 +36,56 @@ impl core::future::Future for AxumConn {
     }
 }
 
+/// A Axum websocket sink wrapper, that implements futures `Sink` in a way, that makes it compatible
+/// with y-sync protocol, so that it can be used by y-sync crate [BroadcastGroup].
+///
+/// # Examples
+///
+/// ```rust
+/// use std::net::SocketAddr;
+/// use std::str::FromStr;
+/// use std::sync::Arc;
+/// use futures_util::StreamExt;
+/// use tokio::sync::Mutex;
+/// use tokio::task::JoinHandle;
+/// use Axum::{Filter, Rejection, Reply};
+/// use Axum::ws::{WebSocket, Ws};
+/// use yrs_Axum::broadcast::BroadcastGroup;
+/// use yrs_Axum::ws::{AxumSink, AxumStream};
+///
+/// async fn start_server(
+///     addr: &str,
+///     bcast: Arc<BroadcastGroup>,
+/// ) -> Result<JoinHandle<()>, Box<dyn std::error::Error>> {
+///     let addr = SocketAddr::from_str(addr)?;
+///     let ws = Axum::path("my-room")
+///         .and(Axum::ws())
+///         .and(Axum::any().map(move || bcast.clone()))
+///         .and_then(ws_handler);
+///
+///     Ok(tokio::spawn(async move {
+///         Axum::serve(ws).run(addr).await;
+///     }))
+/// }
+///
+/// async fn ws_handler(ws: Ws, bcast: Arc<BroadcastGroup>) -> Result<impl Reply, Rejection> {
+///     Ok(ws.on_upgrade(move |socket| peer(socket, bcast)))
+/// }
+///
+/// async fn peer(ws: WebSocket, bcast: Arc<BroadcastGroup>) {
+///     let (sink, stream) = ws.split();
+///     // convert Axum web socket into compatible sink/stream
+///     let sink = Arc::new(Mutex::new(AxumSink::from(sink)));
+///     let stream = AxumStream::from(stream);
+///     // subscribe to broadcast group
+///     let sub = bcast.subscribe(sink, stream);
+///     // wait for subscribed connection to close itself
+///     match sub.completed().await {
+///         Ok(_) => println!("broadcasting for channel finished successfully"),
+///         Err(e) => eprintln!("broadcasting for channel finished abruptly: {}", e),
+///     }
+/// }
+/// ```
 #[repr(transparent)]
 #[derive(Debug)]
 pub struct AxumSink(SplitSink<WebSocket, Message>);
